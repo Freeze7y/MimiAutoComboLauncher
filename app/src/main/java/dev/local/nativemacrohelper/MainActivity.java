@@ -19,6 +19,8 @@ public final class MainActivity extends Activity {
     private final Map<String, String> labels = new HashMap<>();
     private final Map<String, android.graphics.Bitmap> appIcons = new HashMap<>();
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService updateWorker = Executors.newSingleThreadExecutor();
+    private boolean checkingUpdate, resumed;
     private ArrayAdapter<String> adapter;
     private EditText search;
     private TextView status, empty;
@@ -82,6 +84,7 @@ public final class MainActivity extends Activity {
             if (last.isEmpty()) toast("尚未启动过应用"); else actions(last);
         });
         ui(R.id.diagnostics).setOnClickListener(v -> diagnostics());
+        ui(R.id.about).setOnClickListener(v -> about());
         if (state != null) {
             pendingGame = state.getString("pendingGame");
             pendingAction = state.getString("pendingAction");
@@ -127,14 +130,72 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        resumed = true;
         updateStatus();
+        if (MacroController.prefs(this).getBoolean("autoUpdate", false)
+            && System.currentTimeMillis() - MacroController.prefs(this).getLong("updateAttempt", 0) >= 21600000L) checkUpdate(false);
     }
     private void updateStatus() {
         if (status == null) return;
         String provider = MacroController.provider(this);
         status.setText(provider.isEmpty() ? "未找到原生宏组件，请查看诊断" : "已检测到" + (provider.equals(MacroController.XIAOMI) ? "小米" : "黑鲨") + "原生宏 · 选择应用开始\n实际支持情况以游戏内显示为准");
     }
-    @Override protected void onDestroy() { worker.shutdownNow(); super.onDestroy(); }
+    @Override protected void onPause() { resumed = false; super.onPause(); }
+    @Override protected void onDestroy() { worker.shutdownNow(); updateWorker.shutdownNow(); super.onDestroy(); }
+
+    private String installedVersion() {
+        try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+        catch (PackageManager.NameNotFoundException e) { return "0.0.0"; }
+    }
+
+    private void about() {
+        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(24), dp(12), dp(24), dp(12));
+        TextView version = new TextView(this); version.setText(getString(R.string.app_name) + "\n版本 " + installedVersion()); version.setTextSize(17); content.addView(version);
+        Switch automatic = new Switch(this); automatic.setText("自动检查 GitHub 更新"); automatic.setMinHeight(dp(56));
+        automatic.setChecked(MacroController.prefs(this).getBoolean("autoUpdate", false)); content.addView(automatic);
+        TextView detail = new TextView(this); detail.setText("默认关闭。开启后仅在打开 App 时检查，最多每 6 小时一次。只检查正式 Release，不自动下载或安装。"); detail.setTextSize(13); content.addView(detail);
+        automatic.setOnCheckedChangeListener((button, enabled) -> {
+            MacroController.prefs(this).edit().putBoolean("autoUpdate", enabled).apply();
+        });
+        new AlertDialog.Builder(this).setTitle("关于").setView(content)
+            .setPositiveButton("检查更新", (d, n) -> checkUpdate(true))
+            .setNeutralButton("GitHub 项目", (d, n) -> openProject(UpdateChecker.PROJECT))
+            .setNegativeButton("关闭", null).show();
+    }
+
+    private void openProject(String url) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))); }
+        catch (RuntimeException e) { toast("无法打开浏览器：" + e.getMessage()); }
+    }
+
+    private void checkUpdate(boolean manual) {
+        if (checkingUpdate) { if (manual) toast("正在检查，请稍候"); return; }
+        checkingUpdate = true;
+        MacroController.prefs(this).edit().putLong("updateAttempt", System.currentTimeMillis()).apply();
+        if (manual) toast("正在检查 GitHub 更新…");
+        String installed = installedVersion();
+        updateWorker.execute(() -> {
+            String tag = null, error = null; boolean newer = false;
+            try { tag = UpdateChecker.latestTag(); newer = ReleaseVersion.newer(tag, installed); }
+            catch (Exception e) { error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(); }
+            final String found = tag, failure = error; final boolean available = newer;
+            runOnUiThread(() -> {
+                checkingUpdate = false;
+                if (isDestroyed() || isFinishing() || !resumed) return;
+                if (failure != null) { if (manual) toast("检查失败：" + failure); return; }
+                if (!manual) {
+                    if (available && MacroController.prefs(this).getBoolean("autoUpdate", false))
+                        status.setText("GitHub 有新版本 " + found + "，请从右上角「关于」检查并下载");
+                    return;
+                }
+                if (!available) { toast("当前已是最新版本（GitHub " + found + "）"); return; }
+                new AlertDialog.Builder(this).setTitle("发现新版本 " + found)
+                    .setMessage("当前版本 " + installed + "。前往 GitHub 查看更新说明并下载？")
+                    .setNegativeButton("稍后", null).setPositiveButton("前往下载", (d, n) -> openProject(UpdateChecker.PROJECT + "/releases/tag/" + android.net.Uri.encode(found))).show();
+            });
+        });
+    }
 
     private Set<String> favorites() { return new HashSet<>(MacroController.prefs(this).getStringSet("favorites", Collections.emptySet())); }
     private void filter() {
@@ -348,7 +409,7 @@ public final class MainActivity extends Activity {
     }
 
     private String report() {
-        StringBuilder b = new StringBuilder("米米自动连招启动器 1.1.0\nAndroid ").append(Build.VERSION.RELEASE).append(" / API ").append(Build.VERSION.SDK_INT)
+        StringBuilder b = new StringBuilder(getString(R.string.app_name)).append(' ').append(installedVersion()).append("\nAndroid ").append(Build.VERSION.RELEASE).append(" / API ").append(Build.VERSION.SDK_INT)
             .append("\n设备：").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append("\n系统构建：").append(Build.DISPLAY).append("\n");
         for (String pkg : new String[]{MacroController.XIAOMI, MacroController.SHARK}) {
             try {

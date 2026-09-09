@@ -31,6 +31,6 @@
 python tests/host-regression.py
 ```
 
-测试编译生产 Controller / Receiver / Service，使用记录调用的 Android API 测试替身。当前 39 项断言通过。
+测试编译生产 Controller / Receiver / Service，使用记录调用的 Android API 测试替身。当前 45 项断言通过。
 
 没有把主机断言或构建成功当作真机兼容性、动画流畅度或 HyperOS 权限流程验证。

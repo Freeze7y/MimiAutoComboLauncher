@@ -36,7 +36,7 @@ for name, code in stubs.items():
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(code, encoding='utf-8')
 prod = root / 'app/src/main/java/dev/local/nativemacrohelper'
-for name in ('MacroController', 'MacroReceiver', 'MacroSessionService'):
+for name in ('MacroController', 'MacroReceiver', 'MacroSessionService', 'ReleaseVersion'):
     (src / ('dev/local/nativemacrohelper/' + name + '.java')).write_text((prod / (name + '.java')).read_text(encoding='utf-8'), encoding='utf-8')
 harness = r'''
 package dev.local.nativemacrohelper;
@@ -86,6 +86,12 @@ public class Regression {
    check(MacroController.execute(missingRetry,game,"panel").startsWith("已发送"),"null component must not suppress retry");
    MacroController.execute(missingRetry,game,"stop");
    check(MacroController.execute(missingRetry,game,"panel").startsWith("已发送"),"explicit stop clears debounce");
+   check(ReleaseVersion.newer("v1.10.0","1.2.0"),"numeric minor version");
+   check(!ReleaseVersion.newer("v1.2.0","1.2.0"),"same version");
+   check(!ReleaseVersion.newer("v1.1.9","1.2.0"),"older release");
+   check(ReleaseVersion.newer("2.0","1.99.99"),"major version");
+   check(!ReleaseVersion.newer("1.2","1.2.0"),"missing patch");
+   boolean invalidTag=false; try { ReleaseVersion.newer("v1.3.0-beta", "1.2.0"); } catch(IllegalArgumentException e){invalidTag=true;} check(invalidTag,"reject prerelease tags");
    System.out.println("PASS: "+count+" assertions against production controller/receiver/service (host API doubles only)");
  }
 }
