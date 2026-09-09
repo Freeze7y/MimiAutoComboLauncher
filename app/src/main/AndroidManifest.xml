@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="com.xiaomi.macro.permission" />
+    <uses-permission android:name="com.xiaomi.macro.permission.ACCESS_MACRO_PROVIDER" />
+    <uses-permission android:name="com.xiaomi.macro.permission.ACCESS_TRACKINFO" />
+    <uses-permission android:name="com.blackshark.macro.permission" />
+    <uses-permission android:name="com.blackshark.macro.permission.ACCESS_MACRO_PROVIDER" />
+    <uses-permission android:name="com.blackshark.macro.permission.ACCESS_TRACKINFO" />
+    <queries>
+        <package android:name="com.xiaomi.macro" />
+        <package android:name="com.blackshark.macro" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <application android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/AppTheme" android:allowBackup="false" android:supportsRtl="true">
+        <activity android:name=".MainActivity" android:icon="@mipmap/ic_launcher" android:exported="true" android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".MacroReceiver" android:exported="false" />
+        <service android:name=".MacroSessionService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started Xiaomi native macro session with persistent open-panel and stop controls; no touch injection or foreground-app monitoring." />
+        </service>
+    </application>
+</manifest>

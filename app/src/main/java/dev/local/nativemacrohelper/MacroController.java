@@ -1,0 +1,110 @@
+package dev.local.nativemacrohelper;
+
+import android.app.*;
+import android.content.*;
+import android.content.pm.*;
+import android.os.SystemClock;
+import java.text.SimpleDateFormat;
+import java.util.*;
+
+final class MacroController {
+    static final String XIAOMI = "com.xiaomi.macro", SHARK = "com.blackshark.macro";
+    private static long lastRequest;
+    private static String lastKey = "";
+    static SharedPreferences prefs(Context c) { return c.getSharedPreferences("state", 0); }
+
+    static boolean installed(Context c, String pkg) {
+        try { c.getPackageManager().getApplicationInfo(pkg, 0); return true; }
+        catch (PackageManager.NameNotFoundException e) { return false; }
+    }
+
+    static String provider(Context c) {
+        String saved = prefs(c).getString("provider", XIAOMI);
+        if (installed(c, saved)) return saved;
+        if (installed(c, XIAOMI)) return XIAOMI;
+        if (installed(c, SHARK)) return SHARK;
+        return "";
+    }
+
+    static String label(Context c, String pkg) {
+        try { return c.getPackageManager().getApplicationInfo(pkg, 0).loadLabel(c.getPackageManager()).toString(); }
+        catch (PackageManager.NameNotFoundException e) { return pkg; }
+    }
+
+    static synchronized void log(Context c, String message) {
+        String old = prefs(c).getString("log", "");
+        String line = new SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT).format(new Date()) + " " + message;
+        String value = line + "\n" + old;
+        prefs(c).edit().putString("log", value.substring(0, Math.min(value.length(), 12000))).apply();
+    }
+
+    static String request(Context c, String game, String action) {
+        if ("stop".equals(action)) return execute(c, game, action);
+        if (!"launch".equals(action) && !"panel".equals(action)) return "未知操作";
+        if (game == null || !game.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) return "请输入有效的应用包名";
+        try {
+            c.startForegroundService(new Intent(c, MacroSessionService.class).putExtra("game", game).putExtra("command", action));
+            return "已提交请求，助手将调用原生宏服务";
+        } catch (RuntimeException e) {
+            log(c, "助手服务启动失败: " + e);
+            return "助手服务启动失败：" + e.getMessage();
+        }
+    }
+
+    static String execute(Context c, String game, String action) {
+        if (!Arrays.asList("launch", "panel", "stop").contains(action)) return "未知操作";
+        if (game == null || !game.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) return "请输入有效的应用包名";
+        String target = action.equals("stop") ? prefs(c).getString("lastProvider", provider(c)) : provider(c);
+        if (target.isEmpty()) return "未检测到小米或黑鲨原生宏组件";
+        String key = target + game + action;
+        long now = SystemClock.elapsedRealtime();
+        if (lastKey.equals(key) && now - lastRequest < 1500) return "请求刚刚发送，请稍候再试";
+        Intent service = new Intent().setComponent(new ComponentName(target, target + ".MainService"));
+        try {
+            if (action.equals("stop")) {
+                boolean stopped = c.stopService(service);
+                c.stopService(new Intent(c, MacroSessionService.class));
+                c.getSystemService(NotificationManager.class).cancel(1);
+                String result = stopped ? "系统返回服务已停止" : "系统未报告停止成功；服务可能未运行";
+                log(c, target + " stop: " + result);
+                lastKey = "";
+                return result;
+            }
+            service.putExtra("gamePackage", game).putExtra("clickIcon", action.equals("panel"));
+            if (action.equals("launch")) {
+                Intent launch = c.getPackageManager().getLaunchIntentForPackage(game);
+                if (launch == null) return "找不到该应用的启动入口，请确认包名和应用状态";
+                c.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            }
+            ComponentName started = c.startForegroundService(service);
+            if (started == null) return "系统未找到可启动的原生宏服务";
+            lastKey = key; lastRequest = now;
+            prefs(c).edit().putString("lastGame", game).putString("lastProvider", target).apply();
+            log(c, target + "/.MainService gamePackage=" + game + " clickIcon=" + action.equals("panel") + " 请求已发送");
+            try { c.getSystemService(NotificationManager.class).notify(1, notification(c, game)); }
+            catch (RuntimeException e) { log(c, "更新通知失败: " + e); }
+            return "已发送原生宏请求，请在游戏中确认显示效果";
+        } catch (RuntimeException e) {
+            log(c, action + " " + target + " " + game + ": " + e);
+            return "调用失败：" + e.getClass().getSimpleName() + "\n" + e.getMessage();
+        }
+    }
+
+    private static PendingIntent pending(Context c, String game, String action, int id) {
+        Intent i = new Intent(c, MacroReceiver.class).setAction(action).putExtra("game", game);
+        return PendingIntent.getBroadcast(c, id, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    static Notification notification(Context c, String game) {
+        NotificationManager nm = c.getSystemService(NotificationManager.class);
+        nm.createNotificationChannel(new NotificationChannel("controls", "原生宏快捷操作", NotificationManager.IMPORTANCE_LOW));
+        return new Notification.Builder(c, "controls")
+                .setLargeIcon(android.graphics.drawable.Icon.createWithResource(c, R.drawable.brand_image))
+                .setSmallIcon(R.drawable.ic_notification).setContentTitle(label(c, game) + " · 宏快捷操作")
+                .setContentText("点击打开原生面板 · 长按可打开停止按钮")
+                .setContentIntent(pending(c, game, "panel", 0)).setOnlyAlertOnce(true).setOngoing(true)
+                .addAction(new Notification.Action.Builder(null, "打开面板", pending(c, game, "panel", 0)).build())
+                .addAction(new Notification.Action.Builder(null, "停止宏", pending(c, game, "stop", 1)).build())
+                .build();
+    }
+}
