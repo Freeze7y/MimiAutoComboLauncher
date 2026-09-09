@@ -10,7 +10,7 @@ Java + Android 原生界面，无第三方运行时框架。不会修改游戏 A
 
 从 [GitHub Releases](https://github.com/Freeze7y/MimiAutoComboLauncher/releases/latest) 下载 APK。
 
-当前版本 **1.1.0**，原名「原生宏助手」。沿用原包名和签名，可以覆盖旧版本安装。
+当前版本 **1.1.0**。
 
 ## 功能
 
