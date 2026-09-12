@@ -7,8 +7,8 @@ android {
         applicationId 'dev.local.nativemacrohelper'
         minSdk 29
         targetSdk 36
-        versionCode 9
-        versionName '1.2.0'
+        versionCode 10
+        versionName '1.2.1'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8

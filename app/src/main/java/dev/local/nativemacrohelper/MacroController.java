@@ -53,23 +53,17 @@ final class MacroController {
 
     static String execute(Context c, String game, String action) {
         if (!Arrays.asList("launch", "panel", "stop").contains(action)) return "未知操作";
+        if ("stop".equals(action)) return stop(c);
         if (game == null || !game.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) return "请输入有效的应用包名";
-        String target = action.equals("stop") ? prefs(c).getString("lastProvider", provider(c)) : provider(c);
+        String target = "panel".equals(action) && game.equals(prefs(c).getString("lastGame", ""))
+                ? prefs(c).getString("lastProvider", provider(c)) : provider(c);
         if (target.isEmpty()) return "未检测到小米或黑鲨原生宏组件";
         String key = target + game + action;
         long now = SystemClock.elapsedRealtime();
-        if (lastKey.equals(key) && now - lastRequest < 1500) return "请求刚刚发送，请稍候再试";
+        if ("launch".equals(action) && lastKey.equals(key) && now - lastRequest < 1500)
+            return "请求刚刚发送，请稍候再试";
         Intent service = new Intent().setComponent(new ComponentName(target, target + ".MainService"));
         try {
-            if (action.equals("stop")) {
-                boolean stopped = c.stopService(service);
-                c.stopService(new Intent(c, MacroSessionService.class));
-                c.getSystemService(NotificationManager.class).cancel(1);
-                String result = stopped ? "系统返回服务已停止" : "系统未报告停止成功；服务可能未运行";
-                log(c, target + " stop: " + result);
-                lastKey = "";
-                return result;
-            }
             service.putExtra("gamePackage", game).putExtra("clickIcon", action.equals("panel"));
             if (action.equals("launch")) {
                 Intent launch = c.getPackageManager().getLaunchIntentForPackage(game);
@@ -78,7 +72,7 @@ final class MacroController {
             }
             ComponentName started = c.startForegroundService(service);
             if (started == null) return "系统未找到可启动的原生宏服务";
-            lastKey = key; lastRequest = now;
+            if ("launch".equals(action)) { lastKey = key; lastRequest = now; }
             prefs(c).edit().putString("lastGame", game).putString("lastProvider", target).apply();
             log(c, target + "/.MainService gamePackage=" + game + " clickIcon=" + action.equals("panel") + " 请求已发送");
             try { c.getSystemService(NotificationManager.class).notify(1, notification(c, game)); }
@@ -88,6 +82,27 @@ final class MacroController {
             log(c, action + " " + target + " " + game + ": " + e);
             return "调用失败：" + e.getClass().getSimpleName() + "\n" + e.getMessage();
         }
+    }
+
+    private static String stop(Context c) {
+        String target = prefs(c).getString("lastProvider", provider(c));
+        String error = "";
+        try {
+            if (!target.isEmpty()) {
+                boolean stopped = c.stopService(new Intent().setComponent(new ComponentName(target, target + ".MainService")));
+                // false means no running service matched, not a failed stop acknowledgement.
+                log(c, target + " stopService=" + stopped);
+            }
+        } catch (RuntimeException e) {
+            log(c, "原生宏停止请求异常: " + e);
+            error = "原生宏停止请求失败：" + e.getClass().getSimpleName();
+        }
+        try { c.stopService(new Intent(c, MacroSessionService.class)); }
+        catch (RuntimeException e) { log(c, "助手停止异常: " + e); error += " 助手停止失败"; }
+        try { c.getSystemService(NotificationManager.class).cancel(1); }
+        catch (RuntimeException e) { log(c, "通知清理异常: " + e); error += " 通知清理失败"; }
+        lastKey = "";
+        return error.isEmpty() ? "已结束助手会话；原生宏已请求停止或未在运行" : error.trim();
     }
 
     private static PendingIntent pending(Context c, String game, String action, int id) {

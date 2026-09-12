@@ -13,7 +13,7 @@ Check 'resource compile'
 [xml]$manifest = Get-Content app\src\main\AndroidManifest.xml -Raw
 $manifest.DocumentElement.SetAttribute('package', 'dev.local.nativemacrohelper')
 $manifest.Save((Join-Path $root "$build\AndroidManifest.xml"))
-& "$bt\aapt2.exe" link -o "$build\base.apk" --manifest "$build\AndroidManifest.xml" -I $platform --java "$build\generated" --min-sdk-version 29 --target-sdk-version 36 --version-code 9 --version-name 1.2.0 --proguard "$build\resources.pro" "$build\resources.zip"
+& "$bt\aapt2.exe" link -o "$build\base.apk" --manifest "$build\AndroidManifest.xml" -I $platform --java "$build\generated" --min-sdk-version 29 --target-sdk-version 36 --version-code 10 --version-name 1.2.1 --proguard "$build\resources.pro" "$build\resources.zip"
 Check 'resource link'
 $sources = @(Get-ChildItem app\src\main\java,"$build\generated" -Recurse -Filter '*.java' | ForEach-Object { '"' + [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\','/') + '"' })
 $sources | Set-Content -Encoding utf8NoBOM "$build\sources.txt"
@@ -37,7 +37,7 @@ if (!(Test-Path $key)) {
     & keytool -genkeypair -keystore $key -storepass:file $passwordFile -keypass:file $passwordFile -alias release -keyalg RSA -keysize 3072 -validity 10000 -dname 'CN=Native Macro Helper Local Release' -noprompt
     Check 'key generation'
 }
-$apk = Join-Path $root 'dist\MimiAutoComboLauncher-1.2.0.apk'
+$apk = Join-Path $root 'dist\MimiAutoComboLauncher-1.2.1.apk'
 & java -jar "$bt\lib\apksigner.jar" sign --ks $key --ks-key-alias release --ks-pass "file:$passwordFile" --out $apk "$build\aligned.apk"
 Check 'sign'
 & java -jar "$bt\lib\apksigner.jar" verify --verbose --print-certs $apk | Tee-Object dist\signature.txt

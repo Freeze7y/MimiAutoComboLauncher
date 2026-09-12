@@ -15,7 +15,7 @@ stubs = {
 'android/content/ComponentName.java': '''package android.content; public class ComponentName { public String pkg, cls; public ComponentName(String p,String c){pkg=p;cls=c;} }''',
 'android/content/Intent.java': '''package android.content; import java.util.*; public class Intent { public static final int FLAG_ACTIVITY_NEW_TASK=0x10000000; public ComponentName component; public String action; public int flags; public Map<String,Object> extras=new HashMap<>(); public Intent(){} public Intent(Context c,Class<?> k){component=new ComponentName("dev.local.nativemacrohelper",k.getName());} public Intent setComponent(ComponentName n){component=n;return this;} public Intent putExtra(String k,String v){extras.put(k,v);return this;} public Intent putExtra(String k,boolean v){extras.put(k,v);return this;} public String getStringExtra(String k){return (String)extras.get(k);} public Intent setAction(String a){action=a;return this;} public String getAction(){return action;} public Intent addFlags(int f){flags|=f;return this;} }''',
 'android/content/SharedPreferences.java': '''package android.content; import java.util.*; public class SharedPreferences { public Map<String,String> data=new HashMap<>(); public String getString(String k,String d){return data.getOrDefault(k,d);} public Editor edit(){return new Editor();} public class Editor {public Editor putString(String k,String v){data.put(k,v);return this;} public void apply(){}} }''',
-'android/content/Context.java': '''package android.content; import android.app.*; import android.content.pm.*; import java.util.*; public class Context { public final List<String> events=new ArrayList<>(); public final List<Intent> starts=new ArrayList<>(); public SharedPreferences prefs=new SharedPreferences(); public PackageManager pm=new PackageManager(); public NotificationManager nm=new NotificationManager(); public boolean denyVendor=false, denyHelper=false, missingVendorService=false; public SharedPreferences getSharedPreferences(String n,int m){return prefs;} public PackageManager getPackageManager(){return pm;} public <T>T getSystemService(Class<T> k){return k.cast(nm);} public ComponentName startForegroundService(Intent i){events.add("start:"+i.component.cls); starts.add(i); if((denyVendor && i.component.pkg.equals("com.xiaomi.macro")) || (denyHelper && i.component.cls.endsWith("MacroSessionService")))throw new SecurityException("denied"); if(missingVendorService && i.component.pkg.equals("com.xiaomi.macro"))return null; return i.component;} public void startActivity(Intent i){events.add("activity:"+i.component.pkg);} public boolean stopService(Intent i){events.add("stop:"+i.component.cls);return true;} }''',
+'android/content/Context.java': '''package android.content; import android.app.*; import android.content.pm.*; import java.util.*; public class Context { public final List<String> events=new ArrayList<>(); public final List<Intent> starts=new ArrayList<>(); public SharedPreferences prefs=new SharedPreferences(); public PackageManager pm=new PackageManager(); public NotificationManager nm=new NotificationManager(); public boolean denyVendor=false, denyHelper=false, missingVendorService=false, stopResult=true, denyStop=false; public SharedPreferences getSharedPreferences(String n,int m){return prefs;} public PackageManager getPackageManager(){return pm;} public <T>T getSystemService(Class<T> k){return k.cast(nm);} public ComponentName startForegroundService(Intent i){events.add("start:"+i.component.cls); starts.add(i); if((denyVendor && i.component.pkg.equals("com.xiaomi.macro")) || (denyHelper && i.component.cls.endsWith("MacroSessionService")))throw new SecurityException("denied"); if(missingVendorService && i.component.pkg.equals("com.xiaomi.macro"))return null; return i.component;} public void startActivity(Intent i){events.add("activity:"+i.component.pkg);} public boolean stopService(Intent i){events.add("stop:"+i.component.cls);if(denyStop && i.component.pkg.equals("com.xiaomi.macro"))throw new SecurityException("stop denied");return stopResult;} }''',
 'android/content/BroadcastReceiver.java': '''package android.content; public abstract class BroadcastReceiver {public abstract void onReceive(Context c,Intent i);}''',
 'android/content/pm/PackageManager.java': '''package android.content.pm; import android.content.*; public class PackageManager {public boolean missingLaunch=false; public ApplicationInfo getApplicationInfo(String p,int f)throws NameNotFoundException{if(p.equals("com.blackshark.macro"))throw new NameNotFoundException();return new ApplicationInfo();} public Intent getLaunchIntentForPackage(String p){if(missingLaunch)return null;return new Intent().setComponent(new ComponentName(p,"Main"));} public static class NameNotFoundException extends Exception{} }''',
 'android/content/pm/ApplicationInfo.java': '''package android.content.pm; public class ApplicationInfo {public CharSequence loadLabel(PackageManager p){return "Game";}}''',
@@ -58,7 +58,7 @@ public class Regression {
    check(c.starts.get(0).component.cls.equals("com.xiaomi.macro.MainService"),"correct vendor");
    check(game.equals(c.starts.get(0).extras.get("gamePackage")),"preserve game");
    check(Boolean.TRUE.equals(c.starts.get(0).extras.get("clickIcon")),"panel true");
-   new MacroReceiver().onReceive(c,n.content.intent);check(c.starts.size()==1,"duplicate tap suppressed");
+   new MacroReceiver().onReceive(c,n.content.intent);check(c.starts.size()==2,"each explicit panel tap reaches vendor");
    tick();Context afterKill=new Context();afterKill.pm.missingLaunch=true;
    new MacroReceiver().onReceive(afterKill,n.content.intent);noActivity(afterKill);check(afterKill.starts.size()==1,"panel needs no launch intent or live activity");
    tick();Context stop=new Context();new MacroReceiver().onReceive(stop,n.actions.get(1).intent.intent);
@@ -86,6 +86,22 @@ public class Regression {
    check(MacroController.execute(missingRetry,game,"panel").startsWith("已发送"),"null component must not suppress retry");
    MacroController.execute(missingRetry,game,"stop");
    check(MacroController.execute(missingRetry,game,"panel").startsWith("已发送"),"explicit stop clears debounce");
+   Context alreadyStopped=new Context();alreadyStopped.stopResult=false;
+   check(!MacroController.execute(alreadyStopped,null,"stop").contains("失败"),"absent service stop is idempotent");
+   check(alreadyStopped.prefs.getString("log","").contains("stopService=false"),"retain raw stop result");
+   check(alreadyStopped.events.contains("stop:dev.local.nativemacrohelper.MacroSessionService"),"cleanup without game name");
+   Context stopDenied=new Context();stopDenied.denyStop=true;stopDenied.nm.notify(1,n);
+   check(MacroController.execute(stopDenied,game,"stop").contains("失败"),"real stop denial is surfaced");
+   check(stopDenied.events.contains("stop:dev.local.nativemacrohelper.MacroSessionService"),"vendor denial still cleans helper");
+   check(stopDenied.nm.last==null,"vendor denial still clears notification");
+   tick();Context quick=new Context();MacroController.execute(quick,game,"launch");
+   MacroController.execute(quick,game,"panel");MacroController.execute(quick,game,"panel");
+   check(quick.starts.size()==3,"launch followed by repeated panel taps all delivered");
+   MacroController.execute(quick,game,"launch");
+   check(quick.starts.size()==3,"panel does not reset launch double tap guard");
+   Context session=new Context();session.prefs.edit().putString("lastGame",game).putString("lastProvider",MacroController.SHARK).apply();
+   MacroController.execute(session,game,"panel");
+   check(session.starts.get(0).component.pkg.equals(MacroController.SHARK),"panel follows existing session provider");
    check(ReleaseVersion.newer("v1.10.0","1.2.0"),"numeric minor version");
    check(!ReleaseVersion.newer("v1.2.0","1.2.0"),"same version");
    check(!ReleaseVersion.newer("v1.1.9","1.2.0"),"older release");
