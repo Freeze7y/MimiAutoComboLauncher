@@ -6,6 +6,8 @@ $config = Get-Content app/build.gradle -Raw
 $version = [regex]::Match($config, "versionName '([0-9.]+)'").Groups[1].Value
 $code = [regex]::Match($config, 'versionCode (\d+)').Groups[1].Value
 if (!$version -or !$code) { throw 'Cannot read release version' }
+& $Python tests/overlay-regression.py
+if ($LASTEXITCODE -ne 0) { throw 'Overlay regression failed' }
 & $Python tests/host-regression.py
 if ($LASTEXITCODE -ne 0) { throw 'Host regression failed' }
 & $Python tests/update-download-regression.py

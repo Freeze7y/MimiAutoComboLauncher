@@ -275,6 +275,11 @@ public final class MainActivity extends Activity {
         if (pendingGame == null) return;
         String game = pendingGame, action = pendingAction;
         pendingGame = null; pendingAction = null;
+        String provider = MacroController.provider(this);
+        if (!"stop".equals(action) && NativeOverlayPermission.check(this, provider) == NativeOverlayPermission.State.DENIED) {
+            nativeOverlayPrompt(provider);
+            return;
+        }
         String result = MacroController.request(this, game, action);
         status.setText(result); toast(result);
     }
@@ -310,6 +315,7 @@ public final class MainActivity extends Activity {
         boolean macroGranted = !provider.isEmpty() && checkSelfPermission(provider + ".permission") == PackageManager.PERMISSION_GRANTED;
         String message = "通知及快捷操作：" + (notificationsReady() ? "已开启" : "需要开启")
             + "\n原生宏调用权限：" + (provider.isEmpty() ? "未找到组件" : macroGranted ? "已授予" : "未授予，请查看诊断")
+            + "\n系统自动连招悬浮窗：" + NativeOverlayPermission.describe(NativeOverlayPermission.check(this, provider))
             + "\n\n前台服务权限由系统按声明授予。当前不需要无障碍、使用情况访问或助手悬浮窗权限。"
             + "\n\n小米的自启动、后台限制和桌面快捷方式属于系统特殊设置，不能用普通权限弹窗代为开启。";
         new AlertDialog.Builder(this).setTitle("权限检查").setMessage(message)
@@ -317,11 +323,44 @@ public final class MainActivity extends Activity {
                 List<String> missing = missingRuntimePermissions();
                 if (!missing.isEmpty()) requestPermissions(missing.toArray(new String[0]), 1);
                 else if (!notificationsReady()) notificationSettingsPrompt();
-                else toast("所需运行时权限已就绪，无需重复授权");
+                else if (NativeOverlayPermission.check(this, provider) != NativeOverlayPermission.State.ALLOWED
+                        && NativeOverlayPermission.check(this, provider) != NativeOverlayPermission.State.MISSING) nativeOverlayPrompt(provider);
+                else toast("所需运行时权限已就绪");
             })
-            .setNeutralButton("应用权限设置", (d, n) -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                android.net.Uri.parse("package:" + getPackageName()))))
+            .setNeutralButton("权限设置", (d, n) -> new AlertDialog.Builder(this).setTitle("选择应用")
+                .setItems(new String[]{"米米权限设置", "系统自动连招悬浮窗"}, (dialog, which) -> {
+                    if (which == 1) nativeOverlayPrompt(provider);
+                    else startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:" + getPackageName())));
+                }).show())
             .setNegativeButton("关闭", null).show();
+    }
+
+    private void nativeOverlayPrompt(String provider) {
+        NativeOverlayPermission.State state = NativeOverlayPermission.check(this, provider);
+        if (state == NativeOverlayPermission.State.MISSING) { toast("未找到原生宏组件"); return; }
+        new AlertDialog.Builder(this).setTitle("系统自动连招悬浮窗")
+            .setMessage(NativeOverlayPermission.describe(state) + "\n\n请为“自动连招”（" + provider
+                + "）开启显示悬浮窗，而不是为米米开启。若进入应用列表，请选择自动连招；返回后会重新检查。此权限不代表启动管控已放行。")
+            .setPositiveButton("前往授权", (d, n) -> {
+                Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:" + provider));
+                try { startActivityForResult(intent, 42); }
+                catch (ActivityNotFoundException | SecurityException e) {
+                    try { startActivityForResult(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:" + provider)), 42); }
+                    catch (ActivityNotFoundException | SecurityException failure) { toast("无法打开系统设置，请在应用管理中查找自动连招"); }
+                }
+            }).setNegativeButton("取消", null).show();
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == 42) {
+            String result = "系统自动连招悬浮窗：" + NativeOverlayPermission.describe(
+                NativeOverlayPermission.check(this, MacroController.provider(this)));
+            status.setText(result); toast(result);
+        }
     }
 
     private void notificationSettingsPrompt() {

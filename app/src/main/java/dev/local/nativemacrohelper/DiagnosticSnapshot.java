@@ -38,6 +38,7 @@ final class DiagnosticSnapshot {
                     .append(" appOverride=").append(pm.getApplicationEnabledSetting(pkg)).append('\n');
                 if (pkg.equals(game)) b.append("目标启动入口存在=").append(pm.getLaunchIntentForPackage(pkg) != null).append('\n');
                 if (!pkg.equals(MacroController.XIAOMI) && !pkg.equals(MacroController.SHARK)) continue;
+                b.append(" 原生宏悬浮窗=").append(NativeOverlayPermission.describe(NativeOverlayPermission.check(c, pkg))).append('\n');
                 ComponentName component = new ComponentName(pkg, pkg + ".MainService");
                 ServiceInfo si = pm.getServiceInfo(component, PackageManager.MATCH_DISABLED_COMPONENTS);
                 b.append(" MainService enabled=").append(si.enabled).append(" exported=").append(si.exported)

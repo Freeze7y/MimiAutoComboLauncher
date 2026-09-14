@@ -10,7 +10,9 @@ Java + Android 原生界面，无第三方运行时框架。不会修改游戏 A
 
 从 [GitHub Releases](https://github.com/Freeze7y/MimiAutoComboLauncher/releases/latest) 下载 APK。
 
-当前版本 **1.4.1**。
+当前版本 **1.4.2**。
+
+权限检查新增系统“自动连招”的悬浮窗状态：明确未允许时，启动前引导系统授权；无法读取时显示未知。权限设置可打开原生宏悬浮窗管理，返回后重新检查。系统可能要求在列表里选择“自动连招”；米米不能代替用户授予其他应用权限。
 
 ## 功能
 
