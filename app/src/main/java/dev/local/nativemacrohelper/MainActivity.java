@@ -420,13 +420,71 @@ public final class MainActivity extends Activity {
                 if (si.permission != null) b.append("\n本应用获授权=").append(checkSelfPermission(si.permission) == PackageManager.PERMISSION_GRANTED);
             } catch (PackageManager.NameNotFoundException e) { b.append('\n').append(pkg).append("：包或服务未找到"); }
         }
+        b.append("\n\n诊断建议：\n").append(diagnosticAdvice());
         b.append("\n\n通知开启：").append(getSystemService(NotificationManager.class).areNotificationsEnabled());
         b.append("\n通知直接广播，不打开助手界面；用户启动的前台会话；无自动停止或前台轮询。\n\n最近日志：\n").append(MacroController.prefs(this).getString("log", "暂无"));
         return b.toString();
     }
 
+    private String diagnosticAdvice() {
+        StringBuilder advice = new StringBuilder();
+        String target = MacroController.provider(this);
+        if (target.isEmpty()) advice.append("未检测到原生宏组件；助手无法补装系统能力。\n");
+        else try {
+            ServiceInfo service = getPackageManager().getServiceInfo(new ComponentName(target, target + ".MainService"), PackageManager.MATCH_DISABLED_COMPONENTS);
+            advice.append("当前选择组件：").append(target).append("\n");
+            if (!service.enabled || !service.applicationInfo.enabled) advice.append("组件或应用已禁用，请在系统应用设置检查。\n");
+            if (!service.exported) advice.append("此版本服务不允许外部调用，无法通过普通授权修复。\n");
+            if (service.permission != null && checkSelfPermission(service.permission) != PackageManager.PERMISSION_GRANTED)
+                advice.append("缺少组件声明权限，请使用权限检查与申请；系统专有权限可能无法由普通应用取得。\n");
+        } catch (PackageManager.NameNotFoundException e) { advice.append("包存在但 MainService 不可查询，可能为组件版本差异。\n"); }
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        android.app.NotificationChannel channel = nm.getNotificationChannel("controls");
+        if (!nm.areNotificationsEnabled() || (channel != null && channel.getImportance() == NotificationManager.IMPORTANCE_NONE))
+            advice.append("通知或快捷操作频道被关闭，请在通知设置恢复。\n");
+        String result = MacroController.prefs(this).getString("lastResult", "尚无测试结果");
+        advice.append("最近调用结果：").append(result).append("\n");
+        if (result.contains("空值")) advice.append("请对照同一时间系统是否记录‘启动自动连招：拒绝’；空值本身不能证明组件未安装，也不能确定是哪项管控。\n");
+        if (result.contains("SecurityException")) advice.append("调用被权限检查拒绝，请结合异常详情和系统权限记录检查。\n");
+        if (result.contains("ForegroundServiceStartNotAllowedException")) advice.append("前台服务启动受限，请回到助手前台，执行测试 A 对照。\n");
+        if (result.contains("启动入口")) advice.append("请确认目标应用仍已安装、启用且包名正确。\n");
+        advice.append("请求返回成功不代表面板已显示。系统私有启动管控无法在此可靠读取；本报告不包含系统 logcat。不会自动修改系统权限、重启组件或重复发送面板请求。");
+        return advice.toString();
+    }
+
+    private void diagnosticTests() {
+        String[] choices = {"查看修复建议", "测试 A：助手前台仅初始化原生宏", "测试 B：启动游戏并初始化原生宏", "测试 C：直接请求打开原生面板", "记录实际测试现象", "权限检查与申请", "打开原生宏应用设置"};
+        new AlertDialog.Builder(this).setTitle("诊断测试（会调用原生宏）").setItems(choices, (dialog, which) -> {
+            if (which == 0) {
+                new AlertDialog.Builder(this).setTitle("修复建议").setMessage(diagnosticAdvice()).setPositiveButton("关闭", null).show();
+            } else if (which >= 1 && which <= 3) {
+                EditText input = new EditText(this); input.setSingleLine(true); input.setHint("游戏包名");
+                input.setText(MacroController.prefs(this).getString("attemptGame", MacroController.prefs(this).getString("lastGame", "")));
+                new AlertDialog.Builder(this).setTitle(choices[which]).setMessage("使用同一游戏逐项对比。A 不启动游戏；B 会打开游戏；C 可能直接显示原生面板。测试后请记录实际现象。").setView(input)
+                    .setNegativeButton("取消", null).setPositiveButton("执行一次", (d, n) -> {
+                        String game = input.getText().toString().trim();
+                        MacroController.log(this, "用户选择诊断测试 " + choices[which]);
+                        String result = which == 2 ? MacroController.request(this, game, "launch") : MacroController.execute(this, game, which == 1 ? "prepare" : "panel");
+                        toast(result);
+                    }).show();
+            } else if (which == 4) {
+                EditText input = new EditText(this); input.setHint("例如：A 无提示，B 系统记录拒绝，C 未出现面板");
+                new AlertDialog.Builder(this).setTitle("记录现象").setView(input).setNegativeButton("取消", null).setPositiveButton("保存", (d, n) -> {
+                    String value = input.getText().toString().trim();
+                    if (!value.isEmpty()) { MacroController.log(this, "用户观察（非系统检测）：" + value.substring(0, Math.min(1000, value.length()))); toast("已写入诊断日志"); }
+                }).show();
+            } else if (which == 5) permissionOverview();
+            else {
+                String target = MacroController.provider(this);
+                if (target.isEmpty()) { toast("未检测到原生宏组件"); return; }
+                try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + target))); }
+                catch (RuntimeException e) { toast("无法打开系统设置：" + e.getMessage()); }
+            }
+        }).show();
+    }
+
     private void diagnostics() {
-        String[] options = {"查看 / 复制诊断日志", "选择宏组件", "通知设置", "清空日志", "权限检查与申请"};
+        String[] options = {"查看 / 复制诊断日志", "选择宏组件", "通知设置", "清空日志", "权限检查与申请", "诊断测试与修复建议"};
         new AlertDialog.Builder(this).setTitle("诊断与设置").setItems(options, (d, n) -> {
             if (n == 0) {
                 String report = report(); TextView text = new TextView(this); text.setText(report); text.setTextIsSelectable(true); text.setPadding(24, 16, 24, 16);
@@ -443,6 +501,7 @@ public final class MainActivity extends Activity {
                 startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
             } else if (n == 3) { MacroController.prefs(this).edit().remove("log").apply(); toast("日志已清空"); }
             else if (n == 4) permissionOverview();
+            else if (n == 5) diagnosticTests();
 
         }).show();
     }

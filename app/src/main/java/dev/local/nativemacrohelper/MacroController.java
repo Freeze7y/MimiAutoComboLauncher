@@ -39,11 +39,21 @@ final class MacroController {
     }
 
     static String request(Context c, String game, String action) {
+        String result = requestInternal(c, game, action);
+        log(c, "助手请求结果 action=" + action + " game=" + game + " " + result);
+        if (!result.startsWith("已提交")) prefs(c).edit().putString("lastResult", result).apply();
+        return result;
+    }
+
+    private static String requestInternal(Context c, String game, String action) {
         if ("stop".equals(action)) return execute(c, game, action);
         if (!"launch".equals(action) && !"panel".equals(action)) return "未知操作";
         if (game == null || !game.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) return "请输入有效的应用包名";
         try {
-            c.startForegroundService(new Intent(c, MacroSessionService.class).putExtra("game", game).putExtra("command", action));
+            prefs(c).edit().putString("attemptGame", game).apply();
+            log(c, "提交助手会话 action=" + action + " game=" + game);
+            ComponentName helper = c.startForegroundService(new Intent(c, MacroSessionService.class).putExtra("game", game).putExtra("command", action));
+            if (helper == null) { log(c, "助手启动返回空值"); return "助手未能启动，请查看系统启动限制"; }
             return "已提交请求，助手将调用原生宏服务";
         } catch (RuntimeException e) {
             log(c, "助手服务启动失败: " + e);
@@ -52,7 +62,17 @@ final class MacroController {
     }
 
     static String execute(Context c, String game, String action) {
-        if (!Arrays.asList("launch", "panel", "stop").contains(action)) return "未知操作";
+        String id = Long.toString(SystemClock.elapsedRealtime());
+        prefs(c).edit().putString("attemptGame", game == null ? "" : game).apply();
+        log(c, "[" + id + "] 开始 action=" + action + " game=" + game + " caller=" + c.getClass().getSimpleName());
+        String result = executeInternal(c, game, action);
+        prefs(c).edit().putString("lastResult", result).apply();
+        log(c, "[" + id + "] 结果 " + result);
+        return result;
+    }
+
+    private static String executeInternal(Context c, String game, String action) {
+        if (!Arrays.asList("launch", "panel", "prepare", "stop").contains(action)) return "未知操作";
         if ("stop".equals(action)) return stop(c);
         if (game == null || !game.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) return "请输入有效的应用包名";
         String target = "panel".equals(action) && game.equals(prefs(c).getString("lastGame", ""))
@@ -67,11 +87,13 @@ final class MacroController {
             service.putExtra("gamePackage", game).putExtra("clickIcon", action.equals("panel"));
             if (action.equals("launch")) {
                 Intent launch = c.getPackageManager().getLaunchIntentForPackage(game);
+                log(c, "游戏启动入口=" + (launch != null));
                 if (launch == null) return "找不到该应用的启动入口，请确认包名和应用状态";
                 c.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             }
+            log(c, "调用 startForegroundService target=" + target + "/.MainService gamePackage=" + game + " clickIcon=" + action.equals("panel"));
             ComponentName started = c.startForegroundService(service);
-            if (started == null) return "系统未找到可启动的原生宏服务";
+            if (started == null) return "原生宏启动返回空值；组件可能不可用或被系统启动管控拦截，请查看诊断建议";
             if ("launch".equals(action)) { lastKey = key; lastRequest = now; }
             prefs(c).edit().putString("lastGame", game).putString("lastProvider", target).apply();
             log(c, target + "/.MainService gamePackage=" + game + " clickIcon=" + action.equals("panel") + " 请求已发送");
