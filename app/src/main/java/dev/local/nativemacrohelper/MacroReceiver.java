@@ -11,8 +11,11 @@ public final class MacroReceiver extends BroadcastReceiver {
         if (intent == null) return;
         String action = intent.getAction();
         if (!"panel".equals(action) && !"stop".equals(action)) return;
+        DiagnosticTrace.begin(context, intent.getStringExtra("game"), action, "NOTIFICATION", null);
+        DiagnosticTrace.step(context, "NOTIFICATION_RECEIVED");
         MacroController.log(context, "收到通知操作 " + action + " game=" + intent.getStringExtra("game"));
         String result = MacroController.execute(context, intent.getStringExtra("game"), action);
+        DiagnosticTrace.finish(context, result);
         if (!result.startsWith("已发送")) Toast.makeText(context, result, Toast.LENGTH_LONG).show();
     }
 }

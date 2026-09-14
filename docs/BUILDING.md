@@ -31,7 +31,7 @@
 python tests/host-regression.py
 ```
 
-测试编译生产 Controller / Receiver / Service，使用记录调用的 Android API 测试替身。当前 64 项断言通过。增量模块另有 `python tests/delta-regression.py`（15 个场景）及 `python tests/update-download-regression.py`（14 项下载、回退与身份检查，使用 HTTPS/Android 替身）。
+测试编译生产 Controller / Receiver / Service，使用记录调用的 Android API 测试替身。当前 87 项断言通过。增量模块另有 `python tests/delta-regression.py`（15 个场景）及 `python tests/update-download-regression.py`（14 项下载、回退与身份检查，使用 HTTPS/Android 替身）。
 
 没有把主机断言或构建成功当作真机兼容性、动画流畅度或 HyperOS 权限流程验证。
 

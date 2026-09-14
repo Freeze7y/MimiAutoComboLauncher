@@ -131,6 +131,7 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         resumed = true;
+        DiagnosticTrace.activityState = "RESUMED（生命周期状态）";
         updateStatus();
         if (MacroController.prefs(this).getBoolean("autoUpdate", false)
             && System.currentTimeMillis() - MacroController.prefs(this).getLong("updateAttempt", 0) >= 21600000L) checkUpdate(false);
@@ -140,7 +141,7 @@ public final class MainActivity extends Activity {
         String provider = MacroController.provider(this);
         status.setText(provider.isEmpty() ? "未找到原生宏组件，请查看诊断" : "已检测到" + (provider.equals(MacroController.XIAOMI) ? "小米" : "黑鲨") + "原生宏 · 选择应用开始\n实际支持情况以游戏内显示为准");
     }
-    @Override protected void onPause() { resumed = false; super.onPause(); }
+    @Override protected void onPause() { DiagnosticTrace.activityState = "PAUSED（生命周期状态）"; resumed = false; super.onPause(); }
     @Override protected void onDestroy() { worker.shutdownNow(); updateWorker.shutdownNow(); super.onDestroy(); }
 
     private String installedVersion() {
@@ -411,60 +412,15 @@ public final class MainActivity extends Activity {
     private String report() {
         StringBuilder b = new StringBuilder(getString(R.string.app_name)).append(' ').append(installedVersion()).append("\nAndroid ").append(Build.VERSION.RELEASE).append(" / API ").append(Build.VERSION.SDK_INT)
             .append("\n设备：").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append("\n系统构建：").append(Build.DISPLAY).append("\n");
-        for (String pkg : new String[]{MacroController.XIAOMI, MacroController.SHARK}) {
-            try {
-                PackageInfo pi = getPackageManager().getPackageInfo(pkg, PackageManager.GET_SERVICES);
-                b.append('\n').append(pkg).append(" ").append(pi.versionName).append(" / ").append(pi.getLongVersionCode());
-                ServiceInfo si = getPackageManager().getServiceInfo(new ComponentName(pkg, pkg + ".MainService"), 0);
-                b.append("\nMainService enabled=").append(si.enabled).append(" exported=").append(si.exported).append("\npermission=").append(si.permission);
-                if (si.permission != null) b.append("\n本应用获授权=").append(checkSelfPermission(si.permission) == PackageManager.PERMISSION_GRANTED);
-            } catch (PackageManager.NameNotFoundException e) { b.append('\n').append(pkg).append("：包或服务未找到"); }
-        }
-        b.append("\n\n诊断建议：\n").append(diagnosticAdvice());
-        b.append("\n\n通知开启：").append(getSystemService(NotificationManager.class).areNotificationsEnabled());
-        b.append("\n通知直接广播，不打开助手界面；用户启动的前台会话；无自动停止或前台轮询。\n\n最近日志：\n").append(MacroController.prefs(this).getString("log", "暂无"));
+        b.append("\n").append(DiagnosticTrace.report(this));
         return b.toString();
-    }
-
-    private String diagnosticAdvice() {
-        StringBuilder advice = new StringBuilder();
-        String target = MacroController.provider(this);
-        if (target.isEmpty()) advice.append("未检测到原生宏组件；助手无法补装系统能力。\n");
-        else try {
-            ServiceInfo service = getPackageManager().getServiceInfo(new ComponentName(target, target + ".MainService"), PackageManager.MATCH_DISABLED_COMPONENTS);
-            advice.append("当前选择组件：").append(target).append("\n");
-            if (!service.enabled || !service.applicationInfo.enabled) advice.append("组件或应用已禁用，请在系统应用设置检查。\n");
-            if (!service.exported) advice.append("此版本服务不允许外部调用，无法通过普通授权修复。\n");
-            if (service.permission != null && checkSelfPermission(service.permission) != PackageManager.PERMISSION_GRANTED)
-                advice.append("缺少组件声明权限，请使用权限检查与申请；系统专有权限可能无法由普通应用取得。\n");
-        } catch (PackageManager.NameNotFoundException e) { advice.append("包存在但 MainService 不可查询，可能为组件版本差异。\n"); }
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        android.app.NotificationChannel channel = nm.getNotificationChannel("controls");
-        if (!nm.areNotificationsEnabled() || (channel != null && channel.getImportance() == NotificationManager.IMPORTANCE_NONE))
-            advice.append("通知或快捷操作频道被关闭，请在通知设置恢复。\n");
-        String result = MacroController.prefs(this).getString("lastResult", "尚无测试结果");
-        advice.append("最近调用结果：").append(result).append("\n");
-        if (result.contains("空值")) advice.append("请对照同一时间系统是否记录‘启动自动连招：拒绝’；空值本身不能证明组件未安装，也不能确定是哪项管控。\n");
-        if (result.contains("SecurityException")) advice.append("调用被权限检查拒绝，请结合异常详情和系统权限记录检查。\n");
-        if (result.contains("ForegroundServiceStartNotAllowedException")) advice.append("前台服务启动受限，请回到助手前台，执行一键诊断对照。\n");
-        if (result.contains("启动入口")) advice.append("请确认目标应用仍已安装、启用且包名正确。\n");
-        advice.append("请求返回成功不代表面板已显示。系统私有启动管控无法在此可靠读取；本报告不包含系统 logcat。不会自动修改系统权限、重启组件或重复发送面板请求。");
-        return advice.toString();
     }
 
     private void diagnosticTests() {
         String game = MacroController.prefs(this).getString("attemptGame", "");
         if (game.isEmpty()) game = MacroController.prefs(this).getString("lastGame", "");
-        // Preserve the triggering failure before the foreground comparison updates lastResult.
-        String previous = MacroController.prefs(this).getString("lastResult", "暂无");
-        MacroController.log(this, "一键诊断开始；此前结果=" + previous);
-        String test;
-        if (game.isEmpty()) test = "尚未选择游戏，已完成静态检查。正常选择一次游戏后，可再次一键诊断启动问题。";
-        else test = MacroController.execute(this, game, "prepare");
-        String report = "此前结果：" + previous + "\n\n本次前台初始化：" + test + "\n\n" + diagnosticAdvice();
-        if (previous.contains("空值") && test.startsWith("已发送"))
-            report += "\n前台初始化请求成功、此前调用失败：可能与启动时机或系统管控有关，尚不能确定具体开关。可返回游戏确认原生功能。";
-        MacroController.log(this, "一键诊断报告：" + report);
+        DiagnosticRun.run(this, game);
+        String report = report();
         TextView text = new TextView(this); text.setText(report); text.setPadding(dp(20),dp(12),dp(20),dp(12)); text.setTextIsSelectable(true);
         ScrollView scroll = new ScrollView(this); scroll.addView(text);
         new AlertDialog.Builder(this).setTitle("一键诊断结果").setView(scroll)
@@ -475,7 +431,7 @@ public final class MainActivity extends Activity {
     }
 
     private void diagnostics() {
-        String[] options = {"查看 / 复制诊断日志", "选择宏组件", "通知设置", "清空日志", "权限检查与申请", "一键诊断与修复建议"};
+        String[] options = {"查看 / 复制诊断日志", "选择宏组件", "通知设置", "清空日志", "权限检查与申请", "一键诊断（结束后停止宏）", "补充面板显示结果"};
         new AlertDialog.Builder(this).setTitle("诊断与设置").setItems(options, (d, n) -> {
             if (n == 0) {
                 String report = report(); TextView text = new TextView(this); text.setText(report); text.setTextIsSelectable(true); text.setPadding(24, 16, 24, 16);
@@ -490,9 +446,18 @@ public final class MainActivity extends Activity {
                 }).show();
             } else if (n == 2) {
                 startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
-            } else if (n == 3) { MacroController.prefs(this).edit().remove("log").apply(); toast("日志已清空"); }
+            } else if (n == 3) { DiagnosticTrace.clear(this); toast("日志已清空"); }
             else if (n == 4) permissionOverview();
             else if (n == 5) diagnosticTests();
+            else if (n == 6) {
+                String operation = MacroController.prefs(this).getString("displayOperation", "");
+                if (operation.isEmpty()) { toast("尚无启动游戏或打开面板请求"); return; }
+                String[] results = {"第一次就出现", "第二次才出现", "始终未出现", "没有观察"};
+                new AlertDialog.Builder(this).setTitle("最近启动或面板请求的实际效果").setMessage(operation)
+                    .setPositiveButton("选择结果", (a,b) -> new AlertDialog.Builder(this).setItems(results, (v,i) -> {
+                        MacroController.prefs(this).edit().putString("displayObservation", operation + " / 用户报告：" + results[i]).apply(); toast("已加入报告");
+                    }).show()).setNegativeButton("取消", null).show();
+            }
 
         }).show();
     }

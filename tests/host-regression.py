@@ -31,12 +31,13 @@ stubs = {
 'android/widget/Toast.java': '''package android.widget;import android.content.*;public class Toast{public static final int LENGTH_LONG=1;public static Toast makeText(Context c,String m,int d){return new Toast();}public void show(){}}''',
 'dev/local/nativemacrohelper/R.java': '''package dev.local.nativemacrohelper;public class R{public static class drawable{public static int ic_notification=1,brand_image=2;}}''',
 }
+stubs['dev/local/nativemacrohelper/DiagnosticSnapshot.java'] = 'package dev.local.nativemacrohelper;import android.content.Context;class DiagnosticSnapshot {static String capture(Context c,String game){return "snapshot-at-"+android.os.SystemClock.elapsedRealtime();}}'
 for name, code in stubs.items():
     path = src / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(code, encoding='utf-8')
 prod = root / 'app/src/main/java/dev/local/nativemacrohelper'
-for name in ('MacroController', 'MacroReceiver', 'MacroSessionService', 'ReleaseVersion'):
+for name in ('MacroController', 'MacroReceiver', 'MacroSessionService', 'ReleaseVersion', 'DiagnosticTrace', 'DiagnosticRun'):
     (src / ('dev/local/nativemacrohelper/' + name + '.java')).write_text((prod / (name + '.java')).read_text(encoding='utf-8'), encoding='utf-8')
 harness = r'''
 package dev.local.nativemacrohelper;
@@ -118,6 +119,44 @@ public class Regression {
    MacroController.execute(noLaunch,"bad", "panel");
    check(noLaunch.prefs.getString("lastResult","").contains("有效"),"invalid package result recorded");
    check(missing.prefs.getString("log","").contains("助手退出原因"),"failed session exit reason recorded");
+   tick();Context diagCleanup=new Context();diagCleanup.missingVendorService=true;
+   DiagnosticRun.run(diagCleanup,game);
+   check(diagCleanup.events.contains("stop:com.xiaomi.macro.MainService"),"one tap diagnosis stops native even on null result");
+   check(diagCleanup.events.contains("stop:dev.local.nativemacrohelper.MacroSessionService"),"diagnosis cleans own helper");
+   check(diagCleanup.prefs.getString("diagnosticLatest","").contains("NATIVE_NULL"),"cleanup must not overwrite diagnostic conclusion");
+   check(diagCleanup.prefs.getString("diagnosticFailure","").contains("NATIVE_START"),"failed step captured");
+   check(diagCleanup.prefs.getString("diagnosticFailure","").contains("失败时状态"),"failure snapshot stored");
+   check(diagCleanup.prefs.getString("lastResult","").contains("空值"),"retain diagnostic outcome after stop");
+   String evidence=diagCleanup.prefs.getString("diagnosticFailure","");
+   tick();diagCleanup.missingVendorService=false;DiagnosticRun.run(diagCleanup,game);
+   check(diagCleanup.prefs.getString("diagnosticFailure","").equals(evidence),"later success preserves historical failure evidence");
+   check(!DiagnosticTrace.active(),"trace cleared after operation");
+   Context correlated=new Context();MacroController.request(correlated,game,"launch");
+   String trace=correlated.starts.get(0).getStringExtra("traceId");
+   check(trace!=null&&!trace.isEmpty(),"request carries correlation ID");
+   MacroSessionService correlatedService=new MacroSessionService();correlatedService.prefs=correlated.prefs;
+   tick();correlatedService.onStartCommand(correlated.starts.get(0),0,9);
+   check(correlated.prefs.getString("diagnosticLatest","").contains(trace),"same ID in service result");
+   check(correlated.prefs.getString("diagnosticLatest","").contains("HELPER_RECEIVED"),"compact step chain recorded");
+   Context exceptionTrace=new Context();exceptionTrace.denyVendor=true;MacroController.execute(exceptionTrace,game,"panel");
+   check(exceptionTrace.prefs.getString("diagnosticFailure","").contains("SECURITY_EXCEPTION"),"typed exception classification");
+   check(exceptionTrace.prefs.getString("diagnosticFailure","").contains("MacroController.executeInternal"),"useful stack retained");
+   check(exceptionTrace.prefs.getString("diagnosticFailure","").contains("NATIVE_START"),"exception tied to correct step");
+   String first=exceptionTrace.prefs.getString("diagnosticLatest","");MacroController.execute(exceptionTrace,game,"panel");
+   check(!first.equals(exceptionTrace.prefs.getString("diagnosticLatest","")),"unique IDs within same clock tick");
+   DiagnosticTrace.clear(exceptionTrace);
+   check(!DiagnosticTrace.report(exceptionTrace).contains("SecurityException"),"clear removes stored failure report");
+   Context stopError=new Context();stopError.denyStop=true;DiagnosticRun.run(stopError,game);
+   check(stopError.prefs.getString("diagnosticFailure","").contains("NATIVE_STOP"),"cleanup failure remains visible");
+   check(stopError.events.contains("stop:dev.local.nativemacrohelper.MacroSessionService"),"cleanup failure still stops own helper");
+   check(correlated.prefs.getString("diagnosticLatest","").contains("UI→服务等待"),"cross-intent queue delay retained");
+   MacroController.log(correlated,"noisy-event-not-for-export");
+   check(!DiagnosticTrace.report(correlated).contains("noisy-event-not-for-export"),"export omits routine timeline noise");
+   MacroController.log(correlated,"更新准备失败：network-test");
+   check(DiagnosticTrace.report(correlated).contains("network-test"),"export retains auxiliary failures");
+   Context noGame=new Context();DiagnosticRun.run(noGame,"");
+   check(noGame.starts.isEmpty(),"no-game diagnosis does not start vendor");
+   check(noGame.events.contains("stop:dev.local.nativemacrohelper.MacroSessionService"),"no-game diagnosis still cleans session");
    check(ReleaseVersion.newer("v1.10.0","1.2.0"),"numeric minor version");
    check(!ReleaseVersion.newer("v1.2.0","1.2.0"),"same version");
    check(!ReleaseVersion.newer("v1.1.9","1.2.0"),"older release");
