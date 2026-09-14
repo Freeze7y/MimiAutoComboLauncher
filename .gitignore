@@ -16,3 +16,5 @@
 /scripts/diff-state.ps1
 /scripts/pull-system-apks.ps1
 /tests/__pycache__/
+
+/scripts/__pycache__/

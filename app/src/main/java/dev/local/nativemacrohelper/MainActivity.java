@@ -191,8 +191,8 @@ public final class MainActivity extends Activity {
                 }
                 if (!available) { toast("当前已是最新版本（GitHub " + found + "）"); return; }
                 new AlertDialog.Builder(this).setTitle("发现新版本 " + found)
-                    .setMessage("当前版本 " + installed + "。前往 GitHub 查看更新说明并下载？")
-                    .setNegativeButton("稍后", null).setPositiveButton("前往下载", (d, n) -> openProject(UpdateChecker.PROJECT + "/releases/tag/" + android.net.Uri.encode(found))).show();
+                    .setMessage("当前版本 " + installed + "。在应用内下载增量补丁？无适用补丁时下载完整包，安装仍需系统确认。")
+                    .setNegativeButton("稍后", null).setPositiveButton("应用内更新", (d, n) -> startActivity(new Intent(this, UpdateActivity.class).putExtra("tag", found))).show();
             });
         });
     }
@@ -446,45 +446,36 @@ public final class MainActivity extends Activity {
         advice.append("最近调用结果：").append(result).append("\n");
         if (result.contains("空值")) advice.append("请对照同一时间系统是否记录‘启动自动连招：拒绝’；空值本身不能证明组件未安装，也不能确定是哪项管控。\n");
         if (result.contains("SecurityException")) advice.append("调用被权限检查拒绝，请结合异常详情和系统权限记录检查。\n");
-        if (result.contains("ForegroundServiceStartNotAllowedException")) advice.append("前台服务启动受限，请回到助手前台，执行测试 A 对照。\n");
+        if (result.contains("ForegroundServiceStartNotAllowedException")) advice.append("前台服务启动受限，请回到助手前台，执行一键诊断对照。\n");
         if (result.contains("启动入口")) advice.append("请确认目标应用仍已安装、启用且包名正确。\n");
         advice.append("请求返回成功不代表面板已显示。系统私有启动管控无法在此可靠读取；本报告不包含系统 logcat。不会自动修改系统权限、重启组件或重复发送面板请求。");
         return advice.toString();
     }
 
     private void diagnosticTests() {
-        String[] choices = {"查看修复建议", "测试 A：助手前台仅初始化原生宏", "测试 B：启动游戏并初始化原生宏", "测试 C：直接请求打开原生面板", "记录实际测试现象", "权限检查与申请", "打开原生宏应用设置"};
-        new AlertDialog.Builder(this).setTitle("诊断测试（会调用原生宏）").setItems(choices, (dialog, which) -> {
-            if (which == 0) {
-                new AlertDialog.Builder(this).setTitle("修复建议").setMessage(diagnosticAdvice()).setPositiveButton("关闭", null).show();
-            } else if (which >= 1 && which <= 3) {
-                EditText input = new EditText(this); input.setSingleLine(true); input.setHint("游戏包名");
-                input.setText(MacroController.prefs(this).getString("attemptGame", MacroController.prefs(this).getString("lastGame", "")));
-                new AlertDialog.Builder(this).setTitle(choices[which]).setMessage("使用同一游戏逐项对比。A 不启动游戏；B 会打开游戏；C 可能直接显示原生面板。测试后请记录实际现象。").setView(input)
-                    .setNegativeButton("取消", null).setPositiveButton("执行一次", (d, n) -> {
-                        String game = input.getText().toString().trim();
-                        MacroController.log(this, "用户选择诊断测试 " + choices[which]);
-                        String result = which == 2 ? MacroController.request(this, game, "launch") : MacroController.execute(this, game, which == 1 ? "prepare" : "panel");
-                        toast(result);
-                    }).show();
-            } else if (which == 4) {
-                EditText input = new EditText(this); input.setHint("例如：A 无提示，B 系统记录拒绝，C 未出现面板");
-                new AlertDialog.Builder(this).setTitle("记录现象").setView(input).setNegativeButton("取消", null).setPositiveButton("保存", (d, n) -> {
-                    String value = input.getText().toString().trim();
-                    if (!value.isEmpty()) { MacroController.log(this, "用户观察（非系统检测）：" + value.substring(0, Math.min(1000, value.length()))); toast("已写入诊断日志"); }
-                }).show();
-            } else if (which == 5) permissionOverview();
-            else {
-                String target = MacroController.provider(this);
-                if (target.isEmpty()) { toast("未检测到原生宏组件"); return; }
-                try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:" + target))); }
-                catch (RuntimeException e) { toast("无法打开系统设置：" + e.getMessage()); }
-            }
-        }).show();
+        String game = MacroController.prefs(this).getString("attemptGame", "");
+        if (game.isEmpty()) game = MacroController.prefs(this).getString("lastGame", "");
+        // Preserve the triggering failure before the foreground comparison updates lastResult.
+        String previous = MacroController.prefs(this).getString("lastResult", "暂无");
+        MacroController.log(this, "一键诊断开始；此前结果=" + previous);
+        String test;
+        if (game.isEmpty()) test = "尚未选择游戏，已完成静态检查。正常选择一次游戏后，可再次一键诊断启动问题。";
+        else test = MacroController.execute(this, game, "prepare");
+        String report = "此前结果：" + previous + "\n\n本次前台初始化：" + test + "\n\n" + diagnosticAdvice();
+        if (previous.contains("空值") && test.startsWith("已发送"))
+            report += "\n前台初始化请求成功、此前调用失败：可能与启动时机或系统管控有关，尚不能确定具体开关。可返回游戏确认原生功能。";
+        MacroController.log(this, "一键诊断报告：" + report);
+        TextView text = new TextView(this); text.setText(report); text.setPadding(dp(20),dp(12),dp(20),dp(12)); text.setTextIsSelectable(true);
+        ScrollView scroll = new ScrollView(this); scroll.addView(text);
+        new AlertDialog.Builder(this).setTitle("一键诊断结果").setView(scroll)
+            .setPositiveButton("权限与设置", (d,n) -> permissionOverview())
+            .setNeutralButton("复制完整报告", (d,n) -> {
+                getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("宏诊断", report())); toast("已复制");
+            }).setNegativeButton("关闭", null).show();
     }
 
     private void diagnostics() {
-        String[] options = {"查看 / 复制诊断日志", "选择宏组件", "通知设置", "清空日志", "权限检查与申请", "诊断测试与修复建议"};
+        String[] options = {"查看 / 复制诊断日志", "选择宏组件", "通知设置", "清空日志", "权限检查与申请", "一键诊断与修复建议"};
         new AlertDialog.Builder(this).setTitle("诊断与设置").setItems(options, (d, n) -> {
             if (n == 0) {
                 String report = report(); TextView text = new TextView(this); text.setText(report); text.setTextIsSelectable(true); text.setPadding(24, 16, 24, 16);
